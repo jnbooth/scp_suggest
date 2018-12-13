@@ -1,0 +1,11 @@
+[package]
+name = "scp_suggest"
+version = "0.1.0"
+authors = ["Joshua Booth <joshua.n.booth@gmail.com>"]
+
+[dependencies]
+reqwest = "*"
+select = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
