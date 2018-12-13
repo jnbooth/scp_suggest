@@ -32,16 +32,10 @@ struct Article {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-struct Suggestion {
-    i: u16,
-    p: usize
-}
-
-#[derive(Clone, Deserialize, Serialize)]
 struct Suggestions {
     i: u16,
     s: String,
-    xs: Vec<Suggestion>
+    xs: Vec<[usize; 2]>
 }
 
 impl Article {
@@ -171,12 +165,12 @@ fn record_titles(client: &Client) -> IO<HashMap<u16, String>> {
 /// Obtains Suggestions for an Article.
 fn suggest(xs: &[Article], x: &Article) -> Suggestions {
     println!("Suggesting: SCP-{}", x.number);
-    let suggestions: Vec<Suggestion> = x
+    let suggestions: Vec<[usize; 2]> = x
         .suggestions(&xs)
         .into_iter()
         .take(21)
         .filter(|(y, _)| y.number != x.number)
-        .map(|(y, score)| Suggestion { i: y.number, p: (score * 10000.0) as usize })
+        .map(|(y, score)| [y.number as usize, (score * 10000.0) as usize])
         .collect();
     Suggestions { i: x.number, s: x.title.clone(), xs: suggestions }
 }
