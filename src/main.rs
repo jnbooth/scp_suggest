@@ -21,7 +21,7 @@ use std::str::FromStr;
 const SCRAPE: bool = false;
 const MAX_ARTICLE: u16 = 5000;
 
-type ResultAny<T> = Result<T, Box<Error>>;
+type IO<T> = Result<T, Box<Error>>;
 
 #[derive(Clone, Deserialize, Serialize)]
 struct Article {
@@ -29,6 +29,19 @@ struct Article {
     title: String,
     up: HashSet<u32>,
     down: HashSet<u32>
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct Suggestion {
+    i: u16,
+    p: f64
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct Suggestions {
+    i: u16,
+    s: String,
+    xs: Vec<Suggestion>
 }
 
 impl Article {
@@ -75,25 +88,6 @@ impl Users {
     }
 }
 
-fn record_titles(client: &Client) -> ResultAny<HashMap<u16, String>> {
-    let mut titles = HashMap::new();
-    let mut pages: Vec<String> = 
-        (2..6)
-            .map(|i| format!("http://scp-wiki.wikidot.com/scp-series-{}", i))
-            .collect();
-    pages.push("http://scp-wiki.wikidot.com/scp-series".to_string());
-    for page in pages {
-        let res = client.get(&page).send()?;
-        let doc = Document::from_read(res)?;
-        for node in doc.find(Class("series").descendant(Name("li"))) {
-            if let Some((num, title)) = parse_title(&node) {
-                titles.insert(num, title);
-            }
-        }
-    }
-    Ok(titles)
-}
-
 fn parse_title(node: &Node) -> Option<(u16, String)> {
     let link = node.find(Name("a")).next()?;
     let link_href = link.attr("href")?;
@@ -109,29 +103,6 @@ fn parse_title(node: &Node) -> Option<(u16, String)> {
     } else { 
         None 
     }
-}
-
-/// Queries Wikidot for information about an article. Impure.
-fn request_article(client: &Client, users: &mut Users, number: u16, title: String) -> ResultAny<Article> {
-    let res = client
-        .get(&format!("http://scp-wiki.wikidot.com/SCP-{:03}", number))
-        .send()?
-        .text()?;
-    let id = parse_id(&res)?;
-    let doc = request_module(&client, "pagerate/WhoRatedPageModule", id)?;
-    Ok(parse_votes(users, number, title, doc))
-}
-
-/// POSTs a request to Wikidot's AJAX module connector. Impure.
-fn request_module(client: &Client, module_name: &str, id: u32) -> ResultAny<Document> {
-    let res = client
-        .post("http://scp-wiki.wikidot.com/ajax-module-connector.php")
-        .form(&[
-            ("moduleName", module_name),
-            ("pageId", &id.to_string())
-        ])
-        .send()?;
-    Ok(Document::from_read(res)?)
 }
 
 /// Obtains a webpage's Wikidot ID.
@@ -177,16 +148,72 @@ fn parse_votes(users: &mut Users, number: u16, title: String, doc: Document) -> 
     Article { number, title, up, down }
 }
 
-fn read_json<T: DeserializeOwned>(path: &str) -> ResultAny<T> {
+/// Requests names for all articles from the mainlist.
+fn record_titles(client: &Client) -> IO<HashMap<u16, String>> {
+    let mut titles = HashMap::new();
+    let mut pages: Vec<String> = 
+        (2..6)
+            .map(|i| format!("http://scp-wiki.wikidot.com/scp-series-{}", i))
+            .collect();
+    pages.push("http://scp-wiki.wikidot.com/scp-series".to_string());
+    for page in pages {
+        let res = client.get(&page).send()?;
+        let doc = Document::from_read(res)?;
+        for node in doc.find(Class("series").descendant(Name("li"))) {
+            if let Some((num, title)) = parse_title(&node) {
+                titles.insert(num, title);
+            }
+        }
+    }
+    Ok(titles)
+}
+
+/// Obtains Suggestions for an Article.
+fn suggest(xs: &[Article], x: &Article) -> Suggestions {
+    println!("Suggesting: SCP-{}", x.number);
+    let suggestions: Vec<Suggestion> = x
+        .suggestions(&xs)
+        .into_iter()
+        .take(21)
+        .filter(|(y, _)| y.number != x.number)
+        .map(|(y, score)| Suggestion { i: y.number, p: score })
+        .collect();
+    Suggestions { i: x.number, s: x.title.clone(), xs: suggestions }
+}
+
+/// Queries Wikidot for information about an article.
+fn request_article(client: &Client, users: &mut Users, number: u16, title: String) -> IO<Article> {
+    let res = client
+        .get(&format!("http://scp-wiki.wikidot.com/SCP-{:03}", number))
+        .send()?
+        .text()?;
+    let id = parse_id(&res)?;
+    let doc = request_module(&client, "pagerate/WhoRatedPageModule", id)?;
+    Ok(parse_votes(users, number, title, doc))
+}
+
+/// POSTs a request to Wikidot's AJAX module connector.
+fn request_module(client: &Client, module_name: &str, id: u32) -> IO<Document> {
+    let res = client
+        .post("http://scp-wiki.wikidot.com/ajax-module-connector.php")
+        .form(&[
+            ("moduleName", module_name),
+            ("pageId", &id.to_string())
+        ])
+        .send()?;
+    Ok(Document::from_read(res)?)
+}
+
+fn read_json<T: DeserializeOwned>(path: &str) -> IO<T> {
     let file = File::open(path)?;
     Ok(serde_json::from_reader(file)?)
 }
-fn write_json<T: Serialize>(path: &str, data: &T) -> ResultAny<()> {
+fn write_json<T: Serialize>(path: &str, data: &T) -> IO<()> {
     let file = File::create(path)?;
     Ok(serde_json::to_writer(file, data)?)
 }
 
-fn record_votes(client: &Client, users: &mut Users, titles: HashMap<u16, String>) -> ResultAny<()> {
+fn record_votes(client: &Client, users: &mut Users, titles: HashMap<u16, String>) -> IO<()> {
     let mut articles = Vec::new();
     for i in 2..MAX_ARTICLE {
         let scp = format!("SCP-{:03}", i);
@@ -200,29 +227,25 @@ fn record_votes(client: &Client, users: &mut Users, titles: HashMap<u16, String>
     write_json("data/articles.json", &articles)
 }
 
-fn scrape() -> ResultAny<()> {
+fn scrape() -> IO<()> {
     let client = reqwest::Client::new();
     let mut users = Users::new();
     let titles = record_titles(&client)?;
     record_votes(&client, &mut users, titles)
 }
 
-fn suggest() -> ResultAny<()> {
+fn suggests() -> IO<()> {
     let articles: Vec<Article> = read_json("data/articles.json")?;
-    let it = articles
+    let suggestions: Vec<Suggestions> = articles
         .clone()
         .into_iter()
-        .filter(|x| x.number == 1135)
-        .flat_map(|x| x.suggestions(&articles))
-        .take(10);
-    for (article, score) in it {
-        println!("{:.2}: {} - {}", score * 100.0, article.number, article.title);
-    }
-    Ok(())
+        .map(|x| suggest(&articles, &x))
+        .collect();
+    write_json("data/suggestions.json", &suggestions)
 }
 
 fn main() {
-    match if SCRAPE { scrape() } else { suggest() } {
+    match if SCRAPE { scrape() } else { suggests() } {
         Err(err) => println!("{}", err),
         Ok(_) => ()
     }
