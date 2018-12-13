@@ -34,7 +34,7 @@ struct Article {
 #[derive(Clone, Deserialize, Serialize)]
 struct Suggestion {
     i: u16,
-    p: f64
+    p: usize
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -176,7 +176,7 @@ fn suggest(xs: &[Article], x: &Article) -> Suggestions {
         .into_iter()
         .take(21)
         .filter(|(y, _)| y.number != x.number)
-        .map(|(y, score)| Suggestion { i: y.number, p: score })
+        .map(|(y, score)| Suggestion { i: y.number, p: (score * 10000.0) as usize })
         .collect();
     Suggestions { i: x.number, s: x.title.clone(), xs: suggestions }
 }
